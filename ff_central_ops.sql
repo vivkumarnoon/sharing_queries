@@ -1,11 +1,27 @@
 with base as
 (
-select order_date, order_month,cancellation_owner,is_shipped, is_delivered, is_cir,country_code,is_ndr,year,is_fbn,payment_method,repeat_customer_type, partner_country,
-count(id_sales_order_item) as items,
-sum(if(est_shipped_at>=shipped_at,1,0)) as wt_items, sum(gmv_aed) as gmv
+/*
+select order_date, order_month,cancellation_owner,is_shipped, is_delivered, is_cir,country_code,is_ndr,year,is_fbn,payment_method,repeat_customer_type, partner_country, */
+
+ 
+
+--count(id_sales_order_item) as items,
+select order_month,
+COUNT(distinct IF((id_sales_order_item_status IN (2,3,4, 5, 6, 8) OR cancel_reason_code IN ("C4","C18","C30", "C31")), item_nr, null)) as total_items,
+COUNT(distinct IF(id_sales_order_item_status IN (5, 6, 8), item_nr, null)) as fulfilled_items,
+COUNT(distinct IF(ship_ff_within_tat=1 and id_sales_order_item_status IN (5, 6, 8), item_nr, null)) as within_tat_ff_items,
+
+ 
+
+--sum(if(est_shipped_at>=shipped_at,1,0)) as wt_items,
+
+ 
+
 from
 (
-select soi.*, so.country_code,Extract(Year from timestamp_add(so.created_at,interval(if(so.country_code='AE',4,if(so.country_code='SA',3,2))) hour)) as year,case when so.payment_method_code in ("cod") then "cod" else "prepaid" end as payment_method,
+select soi.*, 
+CASE WHEN sti.shipped_at is not null and  DATE(sois.occurred_at) <= DATE(sti.shipped_at) THEN 1 ELSE 0 end as ship_ff_within_tat, 
+so.country_code,Extract(Year from timestamp_add(so.created_at,interval(if(so.country_code='AE',4,if(so.country_code='SA',3,2))) hour)) as year,case when so.payment_method_code in ("cod") then "cod" else "prepaid" end as payment_method,
 case when fpo.order_nr is null then "repeat" else "new" end as repeat_customer_type,
 case
 when soi.id_sales_order_item_status in (7) and soi.cancel_reason_code in ("C64") then "Reseller"
@@ -29,8 +45,9 @@ Extract(Month from timestamp_add(so.created_at,interval(if(so.country_code='AE',
 case when srri.id_sales_order_item is not null and id_sales_order_item_status=6 then 1 else 0 end as is_cir,
 '' as order_date,
 row_number() over (Partition by so.id_sales_order) as order_count,
-case when off.id_partner in (1,9200,9800) then -1
-when pwh.is_fbn is null then poi.is_fbn else pwh.is_fbn end as is_fbn,
+-- case when off.id_partner in (1,9200,9800) then -1
+-- when pwh.is_fbn is null then poi.is_fbn else pwh.is_fbn end as is_fbn,
+poi.is_fbn,
 sti.allocated_at as exp_allocated_at,
 TIMESTAMP_ADD(if(wmsl.created_at is null,sbi.created_at,wmsl.created_at),INTERVAL if(so.country_code="AE",4,if(so.country_code='SA',3,2)) Hour) allocated_at,
 cs.partner_country, sti.shipped_at est_shipped_at,sois.occurred_at shipped_at,
@@ -46,7 +63,7 @@ left join (select id_sales_order_item,min(occurred_at) as occurred_at from noonb
 on soid.id_sales_order_item=soi.id_sales_order_item
 left join noonbicenopa.ansharma.cancellation_owner co
 on co.cancel_reason_code=soi.cancel_reason_code
-left join (select * from (select *,row_number() over (Partition by id_sales_order_item order by created_at asc) as col from noondwh.purchase_v2.purchase_order_item) where col=1) poi
+LEFT JOIN `noonbimkpops.purchase.poi_min` poi
 on poi.id_sales_order_item=soi.id_sales_order_item
 left join noondwh.partner.partner_warehouse pwh
 on pwh.id_partner_warehouse=soi.id_partner_warehouse
@@ -58,8 +75,15 @@ left join noondwh.offer.offer off
 on soi.id_offer=off.id_offer
 left join noondwh.oms.purchase_item pi
 on pi.purchase_item_nr=poi.purchase_item_nr
+
+ 
+
 left join noondwh.oms.stock_item sti
 on sti.id_purchase_item=pi.id_purchase_item
+
+ 
+
+
 left join (select id_purchase_item, max(created_at) as created_at from `noondwh.oms.stock_allocation_log` where id_log_type = 1 group by id_purchase_item) wmsl
 on wmsl.id_purchase_item=pi.id_purchase_item
 left join (select id_sales_order_item, allocated_at as created_at from noonbicenopa.ops.allocation)sbi
@@ -68,55 +92,42 @@ left join (select * from (select *,row_number() over (Partition by id_sales_orde
 left join noondwh.oms.purchase_item fpi on fpi.purchase_item_nr=fpoi.purchase_item_nr
 left join noondwh.oms.stock_item fsti on fsti.id_purchase_item=fpi.id_purchase_item
 left join noonbimkpops.g_sheets.china_sellers cs on cs.id_partner=fpoi.id_partner
+
+ 
+
 left join (select id_sales_order_item,occurred_at from noonbicenopa.ops.sales_order_item_status_history_pdate where id_sales_order_item_status = 5) sois
 on sois.id_sales_order_item = soi.id_sales_order_item
+
+ 
+
+
 -- left join `noonbicenopa.ops.allocation` al
 -- on al.id_sales_order_item = soi.id_sales_order_item
 where soi.id_sales_order_item_status not in (1,9)
 and soi.id_invoice_section=1
 and Extract(Date from (timestamp_add(so.created_at,interval(if(so.country_code='AE',4,if(so.country_code='SA',3,2))) hour)))>="2019-10-01"
 and (soi.cancel_reason_code not in ("C21",'C64',"C67") or soi.cancel_reason_code is null)
-and so.id_mp not in (4,6)
+and so.id_mp in (1)
+and poi.is_fbn=0
+and so.country_code="AE"
+and poi.id_partner not in (select id_partner from `noonbimkpops.g_sheets.china_sellers` )
+and extract(year from so.created_at)=2020
+and Extract(Month from timestamp_add(so.created_at,interval(if(so.country_code='AE',4,if(so.country_code='SA',3,2))) hour)) IN (8)
 and sti.shipped_at<=timestamp_add(current_timestamp(), interval if(so.country_code='AE',4,(if(so.country_code='SA',3,2))) HOUR)  
 )
 where unique=1
 #or order_month = 12) extract(month from date_add(current_date(),interval -1 month))
-group by 1,2,3,4,5,6,7,8,9,10,11,12,13
+group by 1 --,2,3,4,5,6,7,8,9,10,11,12,13
 )
-select order_month,
-'overall' country,
-safe_divide(sum(case when is_fbn=0 and is_shipped=1 and  cancellation_owner is null then items else 0 end),sum(case when is_fbn=0  and (cancellation_owner = 'Seller OOS' or cancellation_owner is null)
-then items else 0 end)) ff_perc,
-safe_divide(sum (CASE WHEN is_fbn=0 and is_shipped=1 AND cancellation_owner is null THEN wt_items ELSE 0 END ),sum(case when is_fbn=0  and (cancellation_owner = 'Seller OOS' or cancellation_owner is null)
-then items else 0 end)) wt_ff_perc
-from
-base
-where order_month between extract(month from date_add(current_date,interval -2 month)) and extract(month from date_add(current_date,interval 0 month))
-and year = extract(year from current_date)
-group by 1,2
-union all
-select order_month,
-'AE' country,
-safe_divide(sum (case when is_fbn=0 and is_shipped=1 and  cancellation_owner is null then items else 0 end),sum(case when is_fbn=0  and (cancellation_owner = 'Seller OOS' or cancellation_owner is null)
-then items else 0 end)),
-safe_divide(sum (CASE WHEN is_fbn=0 and is_shipped=1 AND cancellation_owner is null THEN wt_items ELSE 0 END ),sum(case when is_fbn=0  and (cancellation_owner = 'Seller OOS' or cancellation_owner is null)
-then items else 0 end)) wt_ff_perc
-from
-base
-where order_month between extract(month from date_add(current_date,interval -2 month)) and extract(month from date_add(current_date,interval 0 month))
-and year = extract(year from current_date)
-and country_code = 'AE'
-group by 1,2
-union all
-select order_month,
-'SA' country,
-safe_divide(sum (case when is_fbn=0 and is_shipped=1 and  cancellation_owner is null then items else 0 end),sum(case when is_fbn=0  and (cancellation_owner = 'Seller OOS' or cancellation_owner is null)
-then items else 0 end)),
-safe_divide(sum (CASE WHEN is_fbn=0 and is_shipped=1 AND cancellation_owner is null THEN wt_items ELSE 0 END ),sum(case when is_fbn=0  and (cancellation_owner = 'Seller OOS' or cancellation_owner is null)
-then items else 0 end)) wt_ff_perc
-from
-base
-where order_month between extract(month from date_add(current_date,interval -2 month)) and extract(month from date_add(current_date,interval 0 month))
-and year = extract(year from current_date)
-and country_code = 'SA'
-group by 1,2
+
+ 
+
+ 
+
+SELECT  *, (within_tat_ff_items/Total_items) perc_wt_ff, 
+(fulfilled_items/Total_items) perc_fulfilled, 
+
+ 
+
+--(oos_items/Total_items) perc_oos, (pending/Total_items) perc_pending  
+FROM BASE
