@@ -5,6 +5,10 @@ select order_date, order_month,cancellation_owner,is_shipped, is_delivered, is_c
 
  
 
+ 
+
+ 
+
 --count(id_sales_order_item) as items,
 select order_month,
 COUNT(distinct IF((id_sales_order_item_status IN (2,3,4, 5, 6, 8) OR cancel_reason_code IN ("C4","C18","C30", "C31")), item_nr, null)) as total_items,
@@ -13,7 +17,15 @@ COUNT(distinct IF(ship_ff_within_tat=1 and id_sales_order_item_status IN (5, 6, 
 
  
 
+ 
+
+ 
+
 --sum(if(est_shipped_at>=shipped_at,1,0)) as wt_items,
+
+ 
+
+ 
 
  
 
@@ -41,7 +53,7 @@ case when so.country_code = "SA" then (soi.paid_price+soi.wallet_money_value)*(.
 when so.country_code="AE" then (soi.paid_price+soi.wallet_money_value)
 else (soi.paid_price+soi.wallet_money_value)*.21 end as gmv_aed,
 so.country_code as country,
-Extract(Month from timestamp_add(so.created_at,interval(if(so.country_code='AE',4,if(so.country_code='SA',3,2))) hour)) as order_month,
+Extract(Month from timestamp_add(soi.created_at,interval(if(so.country_code='AE',4,if(so.country_code='SA',3,2))) hour)) as order_month,
 case when srri.id_sales_order_item is not null and id_sales_order_item_status=6 then 1 else 0 end as is_cir,
 '' as order_date,
 row_number() over (Partition by so.id_sales_order) as order_count,
@@ -78,8 +90,16 @@ on pi.purchase_item_nr=poi.purchase_item_nr
 
  
 
+ 
+
+ 
+
 left join noondwh.oms.stock_item sti
 on sti.id_purchase_item=pi.id_purchase_item
+
+ 
+
+ 
 
  
 
@@ -95,8 +115,16 @@ left join noonbimkpops.g_sheets.china_sellers cs on cs.id_partner=fpoi.id_partne
 
  
 
+ 
+
+ 
+
 left join (select id_sales_order_item,occurred_at from noonbicenopa.ops.sales_order_item_status_history_pdate where id_sales_order_item_status = 5) sois
 on sois.id_sales_order_item = soi.id_sales_order_item
+
+ 
+
+ 
 
  
 
@@ -106,14 +134,15 @@ on sois.id_sales_order_item = soi.id_sales_order_item
 where soi.id_sales_order_item_status not in (1,9)
 and soi.id_invoice_section=1
 and Extract(Date from (timestamp_add(so.created_at,interval(if(so.country_code='AE',4,if(so.country_code='SA',3,2))) hour)))>="2019-10-01"
-and (soi.cancel_reason_code not in ("C21",'C64',"C67") or soi.cancel_reason_code is null)
+--and (soi.cancel_reason_code not in ("C21",'C64',"C67") or soi.cancel_reason_code is null)
+AND (soi.CANCEL_REASON_CODE IN ('C18','C4','C30','C31') OR soi.CANCEL_REASON_CODE IS NULL)
 and so.id_mp in (1)
 and poi.is_fbn=0
 and so.country_code="AE"
-and poi.id_partner not in (select id_partner from `noonbimkpops.g_sheets.china_sellers` )
-and extract(year from so.created_at)=2020
-and Extract(Month from timestamp_add(so.created_at,interval(if(so.country_code='AE',4,if(so.country_code='SA',3,2))) hour)) IN (8)
-and sti.shipped_at<=timestamp_add(current_timestamp(), interval if(so.country_code='AE',4,(if(so.country_code='SA',3,2))) HOUR)  
+--and poi.id_partner not in (select id_partner from `noonbimkpops.g_sheets.china_sellers` )
+and extract(year from soi.created_at)=2020
+and Extract(Month from timestamp_add(soi.created_at,interval(if(so.country_code='AE',4,if(so.country_code='SA',3,2))) hour)) IN (8)
+and date(sti.shipped_at)<current_date  --interval if(so.country_code='AE',4,(if(so.country_code='SA',3,2))) HOUR)  
 )
 where unique=1
 #or order_month = 12) extract(month from date_add(current_date(),interval -1 month))
@@ -124,8 +153,18 @@ group by 1 --,2,3,4,5,6,7,8,9,10,11,12,13
 
  
 
+ 
+
+ 
+
+ 
+
 SELECT  *, (within_tat_ff_items/Total_items) perc_wt_ff, 
 (fulfilled_items/Total_items) perc_fulfilled, 
+
+ 
+
+ 
 
  
 
